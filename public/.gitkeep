@@ -1,0 +1,5 @@
+# Keeps `public/` present in the repository and in the Docker build context.
+#
+# The dashboard bundle that the service actually serves is published into
+# `public/frontend/` by `npm run build:frontend` (see README). If that has not
+# been run yet, the service still starts and serves a friendly 503 page at /ui/.

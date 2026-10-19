@@ -1,0 +1,21 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+coverage
+tests
+.sessions
+.wwebjs_auth
+.wwebjs_cache
+data
+tmp
+docs
+README.md
+# The dashboard is published into public/frontend before the image is built, so
+# the frontend sources and their dependency tree are not part of the context.
+ww2web
+public/.frontend-staging-*

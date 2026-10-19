@@ -1,0 +1,66 @@
+# =============================================================================
+# razorbills-whatsapp local / single-host deployment
+# -----------------------------------------------------------------------------
+# A single service with a single stateful dependency: the DATA_DIR volume. There
+# is no database and no Redis.
+#
+#   cp .env.example .env          # then edit it
+#   # set API_KEY_PEPPER and ENCRYPTION_KEYS to real secrets
+#   docker compose up -d --build
+#   docker compose logs -f gateway
+#
+# The official Cloud API connector is the default. To build the image with the
+# authorization-gated WhatsApp Web connector, set INSTALL_WEB_CONNECTOR=true in
+# your .env (or the shell) and rebuild.
+#
+# NOTE: this stack has not been built in the environment where the file-storage
+# migration was written (Docker was unavailable). Treat it as untested until you
+# build it yourself.
+# =============================================================================
+name: razorbills-whatsapp
+
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        INSTALL_WEB_CONNECTOR: ${INSTALL_WEB_CONNECTOR:-false}
+    image: razorbills-whatsapp:${WA_GATEWAY_TAG:-latest}
+    restart: unless-stopped
+    # Application secrets (API_KEY_PEPPER, ENCRYPTION_KEYS, META_*, ...) come
+    # from .env. Never commit that file.
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      # All state (API keys, instances, connection state, sessions, deliveries,
+      # audit) lives here and is mounted from the named volume below.
+      DATA_DIR: /app/data
+      TRUST_PROXY: "true"
+    ports:
+      # Bind to loopback by default; put a TLS-terminating proxy in front for
+      # public traffic. There is no debugging port to expose.
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT:-3000}:3000"
+    volumes:
+      # Persistent, access-restricted state. Back this up (see the README) and
+      # never bake it into an image or commit it.
+      - gateway-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health/live').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  gateway-data:

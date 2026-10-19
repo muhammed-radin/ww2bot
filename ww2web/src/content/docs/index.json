@@ -1,0 +1,216 @@
+{
+  "generated": true,
+  "source": "docs/",
+  "documents": [
+    {
+      "id": "getting-started",
+      "file": "getting-started.md",
+      "title": "Getting started",
+      "description": "This guide takes you from a clean checkout to a running service with an owner key and a narrow RazorBills integration key.",
+      "group": "Start here",
+      "order": 0,
+      "lines": 184,
+      "bytes": 6537
+    },
+    {
+      "id": "configuration",
+      "file": "configuration.md",
+      "title": "Configuration",
+      "description": "All configuration is environment-driven and validated at startup by src/config/env.js. The canonical template is ../.env.example.",
+      "group": "Start here",
+      "order": 1,
+      "lines": 236,
+      "bytes": 11544
+    },
+    {
+      "id": "architecture",
+      "file": "architecture.md",
+      "title": "Architecture",
+      "description": "One stateful dependency: the filesystem. No database, no Redis, no ORM, no migrations. Everything is a JSON/JSONL file or an encrypted blob under DATA_DIR.",
+      "group": "Start here",
+      "order": 2,
+      "lines": 241,
+      "bytes": 12907
+    },
+    {
+      "id": "admin-dashboard",
+      "file": "admin-dashboard.md",
+      "title": "Owner dashboard (ww2web)",
+      "description": "ww2web is a React + Vite + shadcn/ui administration dashboard for the owner of this service. It is part of this repository and served by this same Express process — there is no second server, no second port, no databa…",
+      "group": "Start here",
+      "order": 3,
+      "lines": 384,
+      "bytes": 20064
+    },
+    {
+      "id": "authentication",
+      "file": "authentication.md",
+      "title": "Authentication",
+      "description": "Every /api/v1 route except the Meta webhook receiver requires an API key in the X-API-Key header. A key is never accepted in a query string or path, so it cannot end up in access logs, proxies, referrers or browser hi…",
+      "group": "API and connectors",
+      "order": 4,
+      "lines": 237,
+      "bytes": 8967
+    },
+    {
+      "id": "api-reference",
+      "file": "api-reference.md",
+      "title": "API reference",
+      "description": "Base path: /api/v1. Unless stated otherwise every route requires an X-API-Key header carrying a key with the listed scope.",
+      "group": "API and connectors",
+      "order": 5,
+      "lines": 855,
+      "bytes": 26558
+    },
+    {
+      "id": "connectors",
+      "file": "connectors.md",
+      "title": "Connectors",
+      "description": "A connector is the adapter between the gateway's stable API and a specific WhatsApp transport. Business logic never imports a WhatsApp library directly: it talks to the interface in src/connectors/connector.interface.js.",
+      "group": "API and connectors",
+      "order": 6,
+      "lines": 262,
+      "bytes": 10951
+    },
+    {
+      "id": "connection-lifecycle",
+      "file": "connection-lifecycle.md",
+      "title": "Connection lifecycle",
+      "description": "Each instance owns one connector session. The connection state is explicit, persisted, and recoverable across restarts.",
+      "group": "API and connectors",
+      "order": 7,
+      "lines": 205,
+      "bytes": 8434
+    },
+    {
+      "id": "outbound-messaging",
+      "file": "outbound-messaging.md",
+      "title": "Outbound messaging",
+      "description": "The RazorBills backend sends messages through a single endpoint with the narrow messages:send scope.",
+      "group": "API and connectors",
+      "order": 8,
+      "lines": 126,
+      "bytes": 4616
+    },
+    {
+      "id": "webhooks",
+      "file": "webhooks.md",
+      "title": "Cloud API webhooks",
+      "description": "Inbound messages and message-status events for the official Cloud API connector arrive at:",
+      "group": "API and connectors",
+      "order": 9,
+      "lines": 126,
+      "bytes": 4435
+    },
+    {
+      "id": "realtime-events",
+      "file": "realtime-events.md",
+      "title": "Real-time events (SSE)",
+      "description": "Live connection status and authentication challenges are delivered over Server-Sent Events (SSE).",
+      "group": "API and connectors",
+      "order": 10,
+      "lines": 153,
+      "bytes": 6099
+    },
+    {
+      "id": "storage",
+      "file": "storage.md",
+      "title": "Storage",
+      "description": "There is no database and no Redis. Everything the service persists lives under DATA_DIR (default ./data).",
+      "group": "Data, security and operations",
+      "order": 11,
+      "lines": 156,
+      "bytes": 6921
+    },
+    {
+      "id": "data-retention",
+      "file": "data-retention.md",
+      "title": "Data retention and privacy",
+      "description": "The gateway collects only what it needs and keeps message content off disk unless the operator explicitly opts in.",
+      "group": "Data, security and operations",
+      "order": 12,
+      "lines": 159,
+      "bytes": 6212
+    },
+    {
+      "id": "security",
+      "file": "security.md",
+      "title": "Security",
+      "description": "This service is private and single-owner. The security properties below are enforced in code and covered by tests under tests/security/ and tests/integration/.",
+      "group": "Data, security and operations",
+      "order": 13,
+      "lines": 176,
+      "bytes": 7930
+    },
+    {
+      "id": "operations",
+      "file": "operations.md",
+      "title": "Operations",
+      "description": "A runbook for running, maintaining and troubleshooting the service.",
+      "group": "Data, security and operations",
+      "order": 14,
+      "lines": 178,
+      "bytes": 6901
+    },
+    {
+      "id": "deployment",
+      "file": "deployment.md",
+      "title": "Deployment",
+      "description": "The default image is lean: only the official Cloud API connector ships.",
+      "group": "Data, security and operations",
+      "order": 15,
+      "lines": 156,
+      "bytes": 6117
+    },
+    {
+      "id": "testing",
+      "file": "testing.md",
+      "title": "Testing",
+      "description": "The test suite is hermetic: no database, no Redis, no browser and no network. Each test gets its own temporary DATA_DIR (so the real file-backed repositories are exercised), and a fake whatsapp-web.js module covers th…",
+      "group": "Data, security and operations",
+      "order": 16,
+      "lines": 123,
+      "bytes": 5734
+    },
+    {
+      "id": "scripts",
+      "file": "scripts.md",
+      "title": "Scripts",
+      "description": "Command-line utilities. All of them load the same configuration as the server (loadConfig), build a container, and shut it down cleanly. They are designed to run on the same host (and with the same DATA_DIR and secret…",
+      "group": "Data, security and operations",
+      "order": 17,
+      "lines": 137,
+      "bytes": 4355
+    },
+    {
+      "id": "development",
+      "file": "development.md",
+      "title": "Development",
+      "description": "Node.js ≥ 20.11, ESM, no build step.",
+      "group": "Data, security and operations",
+      "order": 18,
+      "lines": 157,
+      "bytes": 6778
+    },
+    {
+      "id": "errors",
+      "file": "errors.md",
+      "title": "Errors",
+      "description": "Every error response has one shape, produced centrally by src/middleware/errorHandler.js:",
+      "group": "Data, security and operations",
+      "order": 19,
+      "lines": 114,
+      "bytes": 4901
+    },
+    {
+      "id": "readme",
+      "file": "readme.md",
+      "title": "razorbills-whatsapp — Documentation",
+      "description": "A private, single-owner, file-based WhatsApp service for the RazorBills backend. It exposes a small, auditable HTTP API over WhatsApp and ships two connectors:",
+      "group": "Reference index",
+      "order": 20,
+      "lines": 95,
+      "bytes": 5006
+    }
+  ]
+}
