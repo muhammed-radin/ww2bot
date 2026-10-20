@@ -23,13 +23,18 @@ Operations a connector may implement (unsupported ones default to
 | \`requestPairingCode(phone)\` | Request a device-linking code. |
 | \`listChats()\`, \`getChat()\`, \`listMessages()\`, \`listContacts()\` | Read-only data. |
 | \`sendMessage({ to, text })\` | Send a text message. |
+| \`sendMedia()\`, \`sendPoll()\`, \`sendLocation()\`, \`sendContact()\`, \`sendReaction()\` | Rich sends, each capability-gated. |
+| \`downloadMedia()\`, \`getMessageReactions()\`, \`getPollVotes()\` | Linked-device/history reads, each capability-gated. |
+| \`markChatSeen()\` | Mark a chat read on the linked device. |
 | \`resetForReconnect()\` | Tear down a half-open client before a supervised reconnect. |
 | \`disconnect({ logout })\` | Stop the session. |
 | \`destroy()\` | Release all resources. |
 
 Capability keys: \`qrAuth\`, \`pairingCode\`, \`listChats\`, \`getChat\`,
-\`listMessages\`, \`listContacts\`, \`webhooks\`, \`outboundMessaging\`,
-\`messageRecording\`.
+\`listMessages\`, \`listContacts\`, \`webhooks\`, \`outboundMessaging\`, \`sendMedia\`,
+\`sendVoice\`, \`sendSticker\`, \`sendLocation\`, \`sendContact\`, \`sendPoll\`,
+\`sendReaction\`, \`markChatSeen\`, \`messageRecording\`, \`messageReactions\`,
+\`pollVotes\`, \`mediaDownload\`, \`maxMediaUploadBytes\`.
 
 ## Capability matrix
 
@@ -44,7 +49,16 @@ Capability keys: \`qrAuth\`, \`pairingCode\`, \`listChats\`, \`getChat\`,
 | List contacts | ❌ | ✅ (may be incomplete) |
 | Full historical export | ❌ | ❌ (partial: recent only) |
 | Webhooks | ✅ | ❌ |
-| Outbound messaging | ✅ text (official) | ✅ text (non-official) |
+| Outbound text | ✅ (official) | ✅ (non-official) |
+| Outbound media / voice / sticker / document | ✅ (uploaded to Meta first) | ✅ |
+| Outbound location / contact | ✅ | ✅ |
+| Outbound reaction | ✅ | ✅ |
+| Native poll creation | ❌ | ✅ |
+| Reaction reads | ❌ | ✅ (linked device) |
+| Poll tallies | ❌ | ✅ (linked device, may lag) |
+| Mark chat seen | ❌ | ✅ |
+| Media download from history | ❌ | ✅ (while the linked device still has it) |
+| Place / receive calls | ❌ | ❌ (call-log records only) |
 | Message recording | inbound webhooks + gateway sends (retention-gated) | incoming + outgoing (live; retention-gated) |
 
 Discover this from the API itself:
@@ -70,6 +84,12 @@ The default and the only connector suitable for production.
   sends made through this API), only when the operator explicitly enabled
   retention for the instance.
 - Sends outbound text messages through the official \`/messages\` endpoint.
+- Sends media (image, video, audio/voice, document, sticker), locations, contact
+  cards and reactions through the Graph API. Media is uploaded to Meta first;
+  the access token is never exposed.
+- Retains safe inbound metadata from webhooks — media MIME type, filename and
+  caption, location coordinates, and contact-card names/phone numbers — so the
+  conversation view can describe messages whose bytes remain on Meta.
 
 ### What it does not do (and never pretends to)
 
@@ -77,6 +97,11 @@ The default and the only connector suitable for production.
 - No full historical chat export.
 - No arbitrary contact list.
 - No navigation of personal chat history.
+- No native poll creation, reaction reads, poll tallies, arbitrary "mark seen",
+  or media download from retained history. Those requests return
+  \`501 CAPABILITY_NOT_SUPPORTED\`.
+- No placing or receiving calls; only call-log records already recorded by the
+  gateway or connector can be displayed.
 
 ### Capability descriptor highlights
 
@@ -86,6 +111,10 @@ The default and the only connector suitable for production.
 - \`listChats\`/\`getChat\`/\`listMessages\` = \`retentionEnabled\` for the instance
 - \`webhooks\` = whether a verify token + app secret are configured
 - \`outboundMessaging\` = whether credentials are configured (\`configured\`)
+- \`sendMedia\`, \`sendVoice\`, \`sendSticker\`, \`sendLocation\`, \`sendContact\`,
+  \`sendReaction\` follow credential configuration; \`sendPoll\`,
+  \`messageReactions\`, \`pollVotes\`, \`markChatSeen\` and \`mediaDownload\` are \`false\`
+- \`maxMediaUploadBytes\`: \`MEDIA_MAX_BYTES\` (default 16 MB)
 - \`messageContentRetention\`: \`enabled\` | \`disabled\`
 
 ### Status meaning
@@ -116,9 +145,11 @@ META_GRAPH_BASE_URL=https://graph.facebook.com
 ### The Graph API client
 
 \`CloudApiClient\` implements only the documented endpoints needed:
-\`getPhoneNumber()\` and \`sendTextMessage()\`. Provider errors are mapped to a safe
-subset (\`providerCode\`, \`providerType\`, a truncated \`providerMessage\`) — the raw
-response and the access token are never returned to API clients or logged.
+\`getPhoneNumber()\`, \`sendTextMessage()\`, media upload, and typed message sends
+for image, video, audio, document, sticker, location, contact and reaction.
+Provider errors are mapped to a safe subset (\`providerCode\`, \`providerType\`, a
+truncated \`providerMessage\`) — the raw response and the access token are never
+returned to API clients or logged.
 
 ---
 
@@ -133,7 +164,10 @@ Puppeteer and is explicitly **not an official WhatsApp API**.
 
 - QR login (\`qrAuth\`) and phone-number pairing (\`pairingCode\`).
 - Read chats, a single chat, recent messages, and contacts from the linked device.
-- Send a text message **as the linked account**.
+- Send text, media, voice notes, stickers, documents, locations, contact cards,
+  native polls and reactions **as the linked account**.
+- Mark a chat read, read reaction lists and poll tallies, and download media
+  while the linked device still holds it.
 
 ### Honest limits
 
@@ -142,8 +176,17 @@ Puppeteer and is explicitly **not an official WhatsApp API**.
 - A running linked browser can read decrypted message content.
 - Only one linked session per instance; cookies and profiles are never shared
   between instances.
-- Outbound sends are text-only and reported as \`sent\` once the linked device
-  hands the message to WhatsApp — **delivery is not independently confirmed**.
+- Outbound sends are reported as \`sent\` once the linked device hands the message
+  to WhatsApp — **delivery is not independently confirmed**.
+- Media downloads ask WhatsApp Web to resolve uncached media and forward the
+  declared MIME type to its download manager (current WhatsApp Web builds reject
+  uncached media that arrives as \`application/octet-stream\`). Expired or deleted
+  media returns \`404 MEDIA_UNAVAILABLE\`; a WhatsApp Web download failure returns
+  \`502 CONNECTOR_ERROR\`.
+- Poll tallies and reaction lists are linked-device reads and may be unavailable
+  or lag behind the phone.
+- Calls cannot be placed or received. Only \`call_log\` records already present on
+  the linked device are displayed.
 - No webhooks.
 
 ### Enabling it
@@ -202,6 +245,38 @@ the connector sends to whatever \`to\` it is given: a bare phone number is treat
 as \`<number>@c.us\`, and a full chat id is passed through unchanged. Rewriting a
 LID to a phone number would address the wrong chat.
 
+### Photo and video preparation
+
+Current WhatsApp Web builds return a \`MediaData\` model from their media
+preparation pipeline. That model carries internal \`__x_*\` fields; when
+\`whatsapp-web.js\` spreads it into the outgoing message, \`__x_id\` can shadow the
+real message key and sender validation fails before the message reaches
+WhatsApp. The connector installs a small page-side guard before the first media
+send that removes those internal fields. The guard only touches media messages;
+text sends are unchanged.
+
+The dashboard still re-encodes selected photos to a bounded JPEG (max 2048 px,
+targeting 4 MB) and flattens transparency onto white. Animated GIFs, SVGs and
+formats the browser cannot decode are offered as documents.
+
+The connector has a second safety net: if image/video preparation fails with a
+recognised pre-send media error, it retries the same bytes once as a document.
+The API response then reports \`type: "document"\`, \`fallback: "document"\` and a
+\`warning\`, and the dashboard shows that warning. It never retries a network or
+post-send failure, and it never converts voice notes, stickers or GIFs into
+silent documents.
+
+### Rich sends and reads
+
+The dashboard's \`#/chats\` page uses the per-chat routes in
+[Chat actions](./api-reference.md#chat-actions). The Web connector serialises
+media messages with their observed \`mimetype\`, filename, size and voice/sticker
+flags; it does **not** fetch media until the operator opens it. Voice notes are
+sent as \`ptt\`/audio using the uploaded bytes, so the browser recording container
+must be one WhatsApp accepts (WebM/Ogg Opus usually works; a rejection is
+reported). Poll votes and reactions are read from the linked page store; they are
+not invented when the page cannot supply them.
+
 ### Browser security
 
 \`BrowserManager\` enforces:
@@ -246,6 +321,16 @@ GET  /api/v1/instances/:instanceId/chats/:chatId                → getChat
 GET  /api/v1/instances/:instanceId/chats/:chatId/messages       → listMessages
 GET  /api/v1/instances/:instanceId/contacts                     → listContacts
 POST /api/v1/messages/send                                      → outboundMessaging
+POST /api/v1/instances/:instanceId/chats/:chatId/messages       → outboundMessaging
+POST /api/v1/instances/:instanceId/chats/:chatId/messages/media → sendMedia
+POST /api/v1/instances/:instanceId/chats/:chatId/messages/poll  → sendPoll
+POST /api/v1/instances/:instanceId/chats/:chatId/messages/location → sendLocation
+POST /api/v1/instances/:instanceId/chats/:chatId/messages/contact  → sendContact
+POST /api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/reaction → sendReaction
+GET  /api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/media → mediaDownload
+GET  /api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/reactions → messageReactions
+GET  /api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/poll-votes → pollVotes
+POST /api/v1/instances/:instanceId/chats/:chatId/seen           → markChatSeen
 \`\`\`
 
 ## Production guidance

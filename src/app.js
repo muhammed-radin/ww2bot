@@ -24,6 +24,7 @@ import { createApiKeysRouter } from './routes/api-keys.routes.js';
 import { createInstancesRouter } from './routes/instances.routes.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createChatsRouter } from './routes/chats.routes.js';
+import { createChatActionsRouter } from './routes/chat.routes.js';
 import { createMessagesRouter } from './routes/messages.routes.js';
 import { createAutoReplyRouter } from './routes/autoreply.routes.js';
 import { createOutboundRouter } from './routes/outbound.routes.js';
@@ -174,6 +175,14 @@ export function createApp({ config, container }) {
       config,
       connectionService: container.connections,
       cursorCodec: container.cursorCodec,
+      requireScopes: container.requireScopes,
+      rateLimit: container.rateLimit,
+      loadInstance: container.loadInstance,
+    }),
+    createChatActionsRouter({
+      config,
+      connectionService: container.connections,
+      outboundService: container.outbound,
       requireScopes: container.requireScopes,
       rateLimit: container.rateLimit,
       loadInstance: container.loadInstance,

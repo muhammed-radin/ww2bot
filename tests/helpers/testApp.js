@@ -87,11 +87,14 @@ export async function startTestApp(options = {}) {
   }
 
   /** Perform an HTTP request and decode the JSON body when present. */
-  async function request(urlPath, { method = 'GET', apiKey, body, headers = {}, json = true } = {}) {
+  async function request(urlPath, { method = 'GET', apiKey, body, rawBody, contentType, headers = {}, json = true } = {}) {
     const requestHeaders = { ...headers };
     if (apiKey) requestHeaders['x-api-key'] = apiKey;
     let payload;
-    if (body !== undefined) {
+    if (rawBody !== undefined) {
+      requestHeaders['content-type'] = contentType ?? 'application/octet-stream';
+      payload = rawBody;
+    } else if (body !== undefined) {
       requestHeaders['content-type'] = 'application/json';
       payload = typeof body === 'string' ? body : JSON.stringify(body);
     }

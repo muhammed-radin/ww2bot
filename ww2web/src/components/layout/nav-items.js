@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Database, LayoutDashboard, Radio, ScrollText, Send, Server, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { BookOpen, Bot, Database, LayoutDashboard, MessageCircle, Radio, ScrollText, Send, Server, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 
 /**
  * Single source of truth for the dashboard navigation, shared by the desktop
@@ -16,6 +16,7 @@ export const NAV_SECTIONS = [
   {
     label: 'Operations',
     items: [
+      { to: '/chats', label: 'Chats', icon: MessageCircle, description: 'Live conversations, media and rich messaging' },
       { to: '/messaging', label: 'Messaging', icon: Send, description: 'Outbound activity and test sends' },
       { to: '/autoreplies', label: 'Auto-replies', icon: Bot, description: 'Automatically reply to incoming messages' },
       { to: '/data', label: 'Data', icon: Database, description: 'Read-only chats, messages and contacts' },

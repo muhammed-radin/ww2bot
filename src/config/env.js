@@ -131,6 +131,9 @@ const envSchema = z.object({
   CORS_ORIGINS: str(''),
   TRUST_PROXY: str('false'),
   BODY_LIMIT: str('100kb'),
+  // Raw media uploads (images, video, audio, documents, stickers) use a
+  // dedicated octet-stream route. JSON bodies keep the strict BODY_LIMIT.
+  MEDIA_MAX_BYTES: num(16777216, { min: 1024, max: 104857600 }),
 
   RATE_LIMIT_WINDOW_MS: num(60000, { min: 1000 }),
   RATE_LIMIT_MAX_REQUESTS: num(100, { min: 1 }),
@@ -446,6 +449,10 @@ export function loadConfig(rawEnv) {
     serviceName: env.SERVICE_NAME,
     logLevel: env.LOG_LEVEL,
     warnings,
+
+    media: {
+      maxUploadBytes: env.MEDIA_MAX_BYTES,
+    },
 
     server: {
       port: env.PORT,

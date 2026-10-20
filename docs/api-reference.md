@@ -76,6 +76,16 @@ connector/capability errors (5xx) whose messages are authored to be safe. See
 | `GET` | `/api/v1/instances/:instanceId/messages` | `data:read` |
 | `GET` | `/api/v1/instances/:instanceId/messages/:messageId` | `data:read` |
 | `GET` | `/api/v1/instances/:instanceId/contacts` | `data:read` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages` | `messages:send` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages/media` | `messages:send` |
+| `GET` | `/api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/media` | `data:read` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages/poll` | `messages:send` |
+| `GET` | `/api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/poll-votes` | `data:read` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages/location` | `messages:send` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages/contact` | `messages:send` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/reaction` | `messages:send` |
+| `GET` | `/api/v1/instances/:instanceId/chats/:chatId/messages/:messageId/reactions` | `data:read` |
+| `POST` | `/api/v1/instances/:instanceId/chats/:chatId/seen` | `messages:send` |
 | `GET` | `/api/v1/instances/:instanceId/autoreplies` | `data:read` |
 | `POST` | `/api/v1/instances/:instanceId/autoreplies` | `auth:manage` |
 | `GET` | `/api/v1/instances/:instanceId/autoreplies/:ruleId` | `data:read` |
@@ -454,6 +464,41 @@ serve.
 
 Query: `limit`, `cursor`, `since`, `until`, `direction` (`inbound|outbound`).
 
+Messages are returned oldest-to-newest for the conversation window. Rich
+messages expose only fields the connector actually observed:
+
+```json
+{
+  "id": "false_131355503402@c.us_3EB0...",
+  "storedId": "msg_...",
+  "chatId": "131355503402@c.us",
+  "direction": "inbound",
+  "type": "image",
+  "body": null,
+  "caption": "Receipt",
+  "timestamp": "2026-10-20T09:00:00.000Z",
+  "ack": 2,
+  "isForwarded": false,
+  "isRevoked": false,
+  "hasReaction": true,
+  "isEdited": false,
+  "hasMedia": true,
+  "media": { "mimetype": "image/jpeg", "filename": "receipt.jpg", "size": 48210, "isPtt": false },
+  "quoted": null,
+  "poll": null,
+  "location": null,
+  "contacts": null
+}
+```
+
+- `media` is metadata only; bytes come from the media endpoint.
+- `poll` carries `{ question, options: [{ name, localId }], allowMultipleAnswers, invalidated }` when present.
+- `location` carries `{ latitude, longitude, name, address, url }`.
+- `contacts` is an array of `{ name, organization, phones: [] }` for contact cards.
+- `call_log` messages carry `subtype` and `duration`; the dashboard only displays them.
+- `quoted` is a small projection `{ id, type, body, fromMe }`.
+- `hasReaction` is a hint. Use the reaction-read endpoint for the actual senders.
+
 ### `GET /instances/:instanceId/messages`
 
 Instance-wide recorded history (incoming **and** outgoing), newest first. This
@@ -503,6 +548,165 @@ provider message id. `404 NOT_FOUND` when the connector never recorded it.
 ### `GET /instances/:instanceId/contacts`
 
 Query: `limit`, `cursor`. Not supported by `cloud_api` → `501`.
+
+---
+
+## Chat actions
+
+Per-chat read and write operations used by the owner dashboard's `#/chats`
+page. Sends go through the same `OutboundService` as `/messages/send`, so
+idempotency, recipient rate limits, audit events and retention behave
+identically. The chat id must be an exact WhatsApp chat id
+(`^[A-Za-z0-9@._-]{5,80}$`); a bare phone number is **not** accepted by these
+routes.
+
+A connector that cannot perform an operation returns
+`501 CAPABILITY_NOT_SUPPORTED`; the dashboard checks
+`GET /instances/:instanceId/capabilities` first and explains the limitation
+instead of offering a control that cannot work.
+
+### `POST /instances/:instanceId/chats/:chatId/messages`
+
+Scope `messages:send`. Send text and optionally quote a message.
+
+```json
+{
+  "text": "On my way",
+  "replyToMessageId": "false_131355503402@c.us_3EB0...",
+  "idempotencyKey": "reply-42"
+}
+```
+
+`replyToMessageId` and `idempotencyKey` are optional. `Idempotency-Key` header
+wins when both are present. Returns the standard outbound result (`status`,
+`providerMessageId`, `acceptedAt`, `idempotent`, `connector`, `note`).
+
+### `POST /instances/:instanceId/chats/:chatId/messages/media`
+
+Scope `messages:send`. Raw media upload; **not JSON**.
+
+Headers:
+
+| Header | Required | Meaning |
+| --- | --- | --- |
+| `Content-Type` | yes | `application/octet-stream` |
+| `X-Media-Mimetype` | yes | Valid MIME type, e.g. `image/jpeg` or `audio/ogg; codecs=opus` |
+| `X-Media-Filename` | no | base64url-encoded UTF-8 filename |
+| `X-Media-Caption` | no | base64url-encoded UTF-8 caption, ≤ 1024 characters |
+
+Query flags: `voice`, `document`, `sticker`, `gif`, `viewOnce`
+(`true|false|1|0`), `replyToMessageId`, `idempotencyKey`. The WhatsApp Web
+connector forwards these to `whatsapp-web.js`; the Cloud API maps `voice` to
+`audio.voice` and does not expose GIF or view-once flags, so those hints are
+ignored there rather than silently emulated.
+
+The body is limited by `MEDIA_MAX_BYTES` (default 16 MB). The response is the
+same outbound envelope. `415`/`400` responses identify a rejected MIME type or
+body; connector rejections are surfaced rather than retried silently.
+
+On WhatsApp Web, if WhatsApp's media preparation rejects an image or video
+**before the message is handed to the chat**, the connector retries the same
+bytes once as a document. A successful fallback returns `type: "document"`,
+`fallback: "document"`, and a safe `warning`; this is a real document send, not
+a silently changed inline message. Other failures (network, timeout, voice
+notes, stickers, GIFs) are never retried, because a retry could duplicate a
+message. The dashboard converts selected photos to a bounded JPEG before
+upload, so this fallback should be uncommon.
+
+### `GET /instances/:instanceId/chats/:chatId/messages/:messageId/media`
+
+Scope `data:read`. Returns the **raw bytes**, not the JSON envelope.
+
+- `Content-Type` and `Content-Disposition` describe the file. Inline rendering is
+  allowed for images, audio, video and PDF; SVG, HTML and other active content is
+  forced to `attachment`.
+- `Cache-Control: private, max-age=60`.
+- `404 MEDIA_UNAVAILABLE` when the linked device no longer has the bytes, the
+  media is empty, or the connector cannot download history media.
+- `502 CONNECTOR_ERROR` when WhatsApp Web finds the message but its download
+  fails. Uncached media is requested on demand and the declared MIME type is
+  forwarded to WhatsApp Web's download manager.
+- The response is never wrapped in JSON, so clients must inspect the status and
+  content type rather than calling `response.json()`.
+
+### `POST /instances/:instanceId/chats/:chatId/messages/poll`
+
+Scope `messages:send`. Native WhatsApp poll.
+
+```json
+{
+  "question": "Where shall we eat?",
+  "options": ["Pizza", "Sushi"],
+  "allowMultipleAnswers": false
+}
+```
+
+`question` is 1–255 characters; 2–12 unique non-empty options of ≤ 100
+characters each. `cloud_api` returns `501 CAPABILITY_NOT_SUPPORTED`.
+
+### `GET /instances/:instanceId/chats/:chatId/messages/:messageId/poll-votes`
+
+Scope `data:read`. Returns the linked device's current tallies. WhatsApp Web only;
+`cloud_api` returns `501`.
+
+### `POST /instances/:instanceId/chats/:chatId/messages/location`
+
+Scope `messages:send`. Static location pin only (live-location sessions cannot be
+started).
+
+```json
+{
+  "latitude": 12.9716,
+  "longitude": 77.5946,
+  "name": "Cubbon Park",
+  "address": "Bengaluru",
+  "url": "https://maps.example/1"
+}
+```
+
+`latitude` is −90…90, `longitude` is −180…180; `name`, `address` and `url` are
+optional. The WhatsApp Web connector passes `url` to the library when it
+supports it; the Cloud API's location payload does not include a URL field.
+
+### `POST /instances/:instanceId/chats/:chatId/messages/contact`
+
+Scope `messages:send`. Two honest shapes:
+
+```json
+{ "contactId": "12025550108@c.us" }
+```
+
+for the WhatsApp Web connector, or
+
+```json
+{ "contact": { "name": "Asha Rao", "phone": "919812345678", "organization": "RazorBills" } }
+```
+
+for the Cloud API. Both identify a real contact; neither invents a lookup the
+connector does not have.
+
+### `POST /instances/:instanceId/chats/:chatId/messages/:messageId/reaction`
+
+Scope `messages:send`. Body `{ "reaction": "👍" }`; an empty string removes the
+reaction where the connector supports removal. Cloud API can send reactions but
+cannot read them back.
+
+### `GET /instances/:instanceId/chats/:chatId/messages/:messageId/reactions`
+
+Scope `data:read`. Returns `{ "reactions": [ { "emoji": "👍", "senders": [ ... ] } ] }`
+from the linked device. `cloud_api` returns `501`.
+
+### `POST /instances/:instanceId/chats/:chatId/seen`
+
+Scope `messages:send`. Marks the chat read on the linked device. This is a
+linked-device action, not a guarantee that the recipient's handset has displayed
+anything. `cloud_api` returns `501`.
+
+### Calls
+
+Neither connector places or receives calls. The chat page only displays
+`call_log` messages that the linked device already holds; there is no call
+endpoint.
 
 ---
 
@@ -600,6 +804,9 @@ Body:
 - `text`: 1–4096 characters.
 - `idempotencyKey` optional; may instead be supplied via the `Idempotency-Key`
   header (header wins).
+- This endpoint sends **text only**. Media, polls, locations, contacts,
+  reactions and seen markers use the per-chat routes in
+  [Chat actions](#chat-actions).
 
 Response:
 

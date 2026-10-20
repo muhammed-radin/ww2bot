@@ -39,8 +39,8 @@
       "description": "ww2web is a React + Vite + shadcn/ui administration dashboard for the owner of this service. It is part of this repository and served by this same Express process — there is no second server, no second port, no databa…",
       "group": "Start here",
       "order": 3,
-      "lines": 384,
-      "bytes": 20064
+      "lines": 448,
+      "bytes": 23750
     },
     {
       "id": "authentication",
@@ -59,8 +59,8 @@
       "description": "Base path: /api/v1. Unless stated otherwise every route requires an X-API-Key header carrying a key with the listed scope.",
       "group": "API and connectors",
       "order": 5,
-      "lines": 855,
-      "bytes": 26558
+      "lines": 1062,
+      "bytes": 34892
     },
     {
       "id": "connectors",
@@ -69,8 +69,8 @@
       "description": "A connector is the adapter between the gateway's stable API and a specific WhatsApp transport. Business logic never imports a WhatsApp library directly: it talks to the interface in src/connectors/connector.interface.js.",
       "group": "API and connectors",
       "order": 6,
-      "lines": 262,
-      "bytes": 10951
+      "lines": 347,
+      "bytes": 16403
     },
     {
       "id": "connection-lifecycle",
@@ -86,11 +86,11 @@
       "id": "outbound-messaging",
       "file": "outbound-messaging.md",
       "title": "Outbound messaging",
-      "description": "The RazorBills backend sends messages through a single endpoint with the narrow messages:send scope.",
+      "description": "The RazorBills backend exposes one stable text endpoint with the narrow messages:send scope, plus per-chat rich-message endpoints used by the owner dashboard.",
       "group": "API and connectors",
       "order": 8,
-      "lines": 126,
-      "bytes": 4616
+      "lines": 199,
+      "bytes": 8834
     },
     {
       "id": "webhooks",
@@ -139,8 +139,8 @@
       "description": "This service is private and single-owner. The security properties below are enforced in code and covered by tests under tests/security/ and tests/integration/.",
       "group": "Data, security and operations",
       "order": 13,
-      "lines": 176,
-      "bytes": 7930
+      "lines": 177,
+      "bytes": 8029
     },
     {
       "id": "operations",

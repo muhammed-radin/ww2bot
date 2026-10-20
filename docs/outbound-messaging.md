@@ -1,11 +1,18 @@
 # Outbound messaging
 
-The RazorBills backend sends messages through a single endpoint with the narrow
-`messages:send` scope.
+The RazorBills backend exposes one stable text endpoint with the narrow
+`messages:send` scope, plus per-chat rich-message endpoints used by the owner
+dashboard.
 
 ```
 POST /api/v1/messages/send
 ```
+
+The public endpoint stays intentionally small: it sends `text` only. Rich sends
+(media, polls, locations, contacts and reactions) live under
+`/instances/:instanceId/chats/:chatId/...` and still run through the same
+`OutboundService` for validation, capability checks, idempotency, recipient rate
+limits, audit records and retention.
 
 ## Request
 
@@ -52,6 +59,71 @@ Body:
   and **nothing is sent**.
 - When a replay is found, `providerMessageId` and `acceptedAt` are those of the
   original delivery.
+
+## Rich chat actions
+
+Every rich action requires `messages:send`, targets an exact chat id (a phone
+number is not accepted here), and uses the same audit, delivery-metadata and
+per-recipient rate-limit path as `/messages/send`. Reads used by the chat page
+(reaction lists, poll tallies, media bytes) use `data:read` instead.
+
+| Action | Endpoint | Shape |
+| --- | --- | --- |
+| Text / reply | `POST /instances/:instanceId/chats/:chatId/messages` | JSON `{ text, replyToMessageId?, idempotencyKey? }` |
+| Media | `POST /instances/:instanceId/chats/:chatId/messages/media` | Raw `application/octet-stream` body + headers/query below |
+| Poll | `POST /instances/:instanceId/chats/:chatId/messages/poll` | JSON `{ question, options, allowMultipleAnswers?, replyToMessageId? }` |
+| Location | `POST /instances/:instanceId/chats/:chatId/messages/location` | JSON `{ latitude, longitude, name?, address?, url?, replyToMessageId? }` |
+| Contact | `POST /instances/:instanceId/chats/:chatId/messages/contact` | JSON `{ contactId }` (Web) **or** `{ contact: { name?, phone, organization? } }` (Cloud) |
+| Reaction | `POST /instances/:instanceId/chats/:chatId/messages/:messageId/reaction` | JSON `{ reaction }` (`""` removes the reaction where supported) |
+| Mark seen | `POST /instances/:instanceId/chats/:chatId/seen` | Empty JSON body |
+| Media download | `GET /instances/:instanceId/chats/:chatId/messages/:messageId/media` | Raw bytes, `data:read` |
+| Reaction read | `GET /instances/:instanceId/chats/:chatId/messages/:messageId/reactions` | JSON, `data:read` |
+| Poll tallies | `GET /instances/:instanceId/chats/:chatId/messages/:messageId/poll-votes` | JSON, `data:read` |
+
+### Media upload protocol
+
+The JSON limit stays at 100 kb; media does **not** go through the JSON parser.
+
+```http
+POST /api/v1/instances/ins_.../chats/131355503402@c.us/messages/media?voice=1
+Content-Type: application/octet-stream
+X-Media-Mimetype: audio/ogg; codecs=opus
+X-Media-Filename: dmFsaWQtbm90ZS5vZ2c
+X-Media-Caption: U2VudCBmcm9tIHRoZSBkYXNoYm9hcmQ=
+Idempotency-Key: note-42
+```
+
+- The request body is the file bytes.
+- `X-Media-Mimetype` is required and must be a valid MIME type.
+- `X-Media-Filename` and `X-Media-Caption` are **base64url-encoded UTF-8**
+  metadata headers. Filenames are reduced to their last path segment and control
+  characters are stripped; captions are limited to 1024 characters.
+- Query flags: `voice`, `document`, `sticker`, `gif`, `viewOnce` (`true|false|1|0`),
+  plus `replyToMessageId` and `idempotencyKey`. The Web connector forwards the
+  hints; the Cloud API maps `voice` to `audio.voice` and ignores GIF/view-once.
+- The decoded bytes are size-checked against `MEDIA_MAX_BYTES` (default 16 MB).
+  The connector decides whether the bytes are acceptable; WhatsApp may reject a
+  container or codec and that error is returned, not hidden.
+- `voice=1` sends a WhatsApp voice note. The browser records Opus in WebM/Ogg;
+  send a format WhatsApp accepts when using the API directly.
+
+### Capability matrix for rich actions
+
+| Action | `web` (linked device) | `cloud_api` |
+| --- | --- | --- |
+| Text, image, video, audio, document, sticker | ✅ | ✅ when credentials are configured |
+| Voice note | ✅ | ✅ when credentials are configured |
+| Location | ✅ | ✅ |
+| Contact | ✅ by exact contact id | ✅ by name + phone |
+| Native poll | ✅ | ❌ `501 CAPABILITY_NOT_SUPPORTED` |
+| Reaction send | ✅ | ✅ |
+| Reaction read | ✅ | ❌ |
+| Poll tallies | ✅ (linked-device read, may lag) | ❌ |
+| Mark chat seen | ✅ | ❌ |
+| Media download from history | ✅ (while the linked device still has it) | ❌ |
+
+Calls are never placed by either connector. `web` can only read call-log records
+that the linked device already contains.
 
 ## Honest statuses
 
@@ -121,5 +193,6 @@ instance removes its delivery metadata.
 ## Related
 
 - [API reference → Outbound](./api-reference.md#outbound--scope-messagessend)
+- [API reference → Chat actions](./api-reference.md#chat-actions)
 - [Configuration → Outbound messaging](./configuration.md#outbound-messaging)
 - [Data retention and privacy](./data-retention.md)

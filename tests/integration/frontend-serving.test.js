@@ -51,6 +51,9 @@ describe('dashboard static hosting', () => {
     // Inline script is never allowed; the SPA is a bundled external module.
     assert.equal(/script-src[^;]*unsafe-inline/.test(csp), false);
     assert.equal(/script-src[^;]*unsafe-eval/.test(csp), false);
+    // Chat media is fetched as a blob; playback needs the explicit exception.
+    assert.match(csp, /media-src 'self' blob:/);
+    assert.match(csp, /img-src[^;]*blob:/);
   });
 
   it('answers a missing asset with a JSON 404 instead of an error page', async () => {

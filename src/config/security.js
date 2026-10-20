@@ -99,6 +99,9 @@ export function uiHelmetOptions() {
         'script-src': ["'self'"],
         'style-src': ["'self'", "'unsafe-inline'"],
         'img-src': ["'self'", 'data:', 'blob:'],
+        // Chat media is fetched as an authenticated blob and played from an
+        // object URL; `media-src` does not inherit the img-src exception.
+        'media-src': ["'self'", 'blob:'],
         'font-src': ["'self'", 'data:'],
         'connect-src': ["'self'"],
         'object-src': ["'none'"],
@@ -122,6 +125,8 @@ export const LOG_REDACT_PATHS = Object.freeze([
   'req.headers["x-csrf-token"]',
   'req.headers.authorization',
   'req.headers.cookie',
+  'req.headers["x-media-caption"]',
+  'req.headers["x-media-filename"]',
   'res.headers["set-cookie"]',
   'apiKey',
   '*.apiKey',

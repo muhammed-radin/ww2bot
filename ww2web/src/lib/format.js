@@ -83,6 +83,57 @@ export function formatCount(value) {
   return new Intl.NumberFormat().format(value);
 }
 
+const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+const dayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+/** Compact file size (binary units, like the browser's own UI). */
+export function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+/** "3:42 PM" for message bubbles and chat-list timestamps. */
+export function formatClock(value) {
+  const date = toDate(value);
+  if (!date) return '';
+  return clockFormatter.format(date);
+}
+
+/** A friendly day separator: Today / Yesterday / Monday, 3 June 2025. */
+export function formatDay(value) {
+  const date = toDate(value);
+  if (!date) return '';
+  const now = new Date();
+  const startOf = (input) => new Date(input.getFullYear(), input.getMonth(), input.getDate()).getTime();
+  const difference = Math.round((startOf(now) - startOf(date)) / 86400000);
+  if (difference === 0) return 'Today';
+  if (difference === 1) return 'Yesterday';
+  return dayFormatter.format(date);
+}
+
+/** Seconds → m:ss (voice notes, call durations). */
+export function formatSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const whole = Math.round(seconds);
+  const minutes = Math.floor(whole / 60);
+  const remainder = whole % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* status vocabulary                                                   */
 /* ------------------------------------------------------------------ */

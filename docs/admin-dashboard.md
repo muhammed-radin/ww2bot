@@ -112,6 +112,8 @@ Tuning: `OWNER_SESSION_TTL_MS`, `OWNER_SESSION_IDLE_MS`, `OWNER_SESSION_MAX`,
 | `#/dashboard` | Service and connection summary |
 | `#/connection` | Sign-in, QR and pairing controls, live events |
 | `#/instances` | Create, inspect, delete instances |
+| `#/chats` | Advanced conversations: history, live messages, media and rich sends |
+| `#/chats/:chatId` | A specific conversation (deep link) |
 | `#/messaging` | Delivery activity and a confirmed test send |
 | `#/autoreplies` | Automatic-reply rules for incoming messages |
 | `#/data` | Read-only chats, messages and contacts, plus a live feed |
@@ -204,6 +206,52 @@ when the Web connector is enabled but Cloud API credentials
 (`META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID`) are not configured, and the page
 says so, so a new instance is not created against a connector that cannot
 authenticate on that host.
+
+### Chats (`#/chats`, `#/chats/:chatId`)
+
+A full-bleed conversation page with a chat-list sidebar and a thread pane. The
+selected instance comes from `GET /api/v1/instances`; capabilities come from
+`GET /api/v1/instances/:id/capabilities` and gate every control. The chat list
+reads `GET .../chats` (silently refreshed every 30 s and immediately on live
+events), and the thread reads `GET .../chats/:chatId/messages`. On the Cloud API
+these reads are available only while retention is enabled and only for messages
+this gateway recorded.
+
+Live messages arrive over the same authenticated SSE stream used by the
+Connection page (`message.received` / `message.sent`). A message for the open
+chat refreshes the thread; a message for another chat refreshes the list and, if
+the tab is hidden, raises a small notification. Opening a chat marks it seen on
+the linked device when `markChatSeen` is true; failures are ignored because read
+receipts are best-effort.
+
+Rendered message types: text, image, video, audio, voice notes, documents,
+stickers, locations, contact cards, native polls, call logs, quoted messages,
+reactions, edited markers, and deleted/system notices. Media is fetched lazily
+as raw bytes with the owner cookie, displayed through an in-memory object URL,
+and can be opened in a lightbox or downloaded. `404 MEDIA_UNAVAILABLE` is shown
+with its explanation, never as a broken image.
+
+The composer supports:
+
+- text with Enter to send and Shift+Enter for a newline, an emoji picker and
+  quoted replies;
+- attachments (photo, video, audio, document), captioning, file-size checks
+  against `maxMediaUploadBytes`, and an optional "send as voice note" flag for
+  audio;
+- in-browser voice recording through `MediaRecorder`; the exact produced MIME
+  type is reported to the server, and a microphone-permission refusal is stated
+  plainly;
+- native poll, static location (including "use my current location") and contact
+  card dialogs, each gated on the connector's capability.
+
+The page never places or receives calls. It only displays call-log records the
+linked device exposes, labelled "Calls cannot be placed from this dashboard".
+Cloud API polls, reaction reads, poll tallies, mark-seen and history-media
+downloads return `501` and are replaced with an explanation. WhatsApp Web history
+is the recent window the linked device holds, not a complete archive.
+
+Deep links use the exact chat id, for example `#/chats/131355503402%40c.us` or
+`#/chats/33247392198739%40lid`.
 
 ### Messaging (`#/messaging`)
 
@@ -358,6 +406,10 @@ reporting `enabled: false` and the reason, instead of failing the request.
    descriptor, and destructive actions are always confirmed.
 5. **No hidden state.** Empty, loading, error, disconnected, degraded and
    "not configured" states are all rendered explicitly rather than implied.
+6. **Media stays in memory.** Chat media is fetched on demand into an object URL,
+   revoked when the bubble unmounts or the chat changes; attachments and voice
+   recordings are held only long enough to send and are never written to browser
+   storage. No media URL is placed in the page's HTML before the owner opens it.
 
 ## Verification status
 
@@ -366,13 +418,25 @@ and authentication flow were exercised against a running service. The Data API
 routes behind `#/data`, the per-instance audit and purge routes, the key-detail
 endpoint and the session-revoke route were exercised end-to-end with an owner
 session (including the `501 CAPABILITY_NOT_SUPPORTED` path for a connector
-without chat history). The instance-wide message history, the live message
-events and the automatic-reply routes were exercised end-to-end against the fake
-WhatsApp Web library. The React rendering itself has been verified by building
-and serving the bundle; there was no browser available in the development
-environment, so the UI has not been clicked through manually and the WhatsApp
-Web browser flow was not run for real (`whatsapp-web.js`/`puppeteer` are
-optional and were not installed).
+without chat history). The rich chat routes, media upload/download, reactions,
+poll votes, seen and capability errors were exercised end-to-end against the fake
+WhatsApp Web library, and the full suite passes. The `#/chats` page itself was
+then exercised in headless Chromium against that fake connector: list and thread
+rendering, rich bubbles, media dialog, poll tallies, reactions, conversation
+details, text and attachment sends, live SSE updates, deep links and read
+receipts all ran without page errors. A real WhatsApp Web session was also linked
+and used to verify `status: ready`, chat reads (including a LID-based chat), rich
+serialisation (media metadata, quoted and revoked messages), inbound image and
+voice-note downloads, and an outbound document download.
+
+Remaining verification gaps are stated rather than implied:
+
+- Rich sends, media upload and browser voice recording have not been exercised
+  against a real handset. They are covered by the fake connector and the
+  backend suite, not by a live send.
+- Cloud API rich sends were not exercised because `META_ACCESS_TOKEN` and
+  `META_PHONE_NUMBER_ID` are empty on this host; Cloud-only unsupported paths are
+  covered by tests and capability descriptors.
 
 ## Related
 

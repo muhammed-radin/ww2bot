@@ -52,6 +52,9 @@ export function useApi(fetcher, deps = [], { immediate = true, pollMs = 0 } = {}
     }
     let cancelled = false;
     setLoading(true);
+    // A dependency change starts a new request; an error from the previous
+    // instance/query must not linger while the new one is in flight.
+    setError(null);
     (async () => {
       try {
         const result = await fetcherRef.current();

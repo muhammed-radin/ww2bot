@@ -69,6 +69,21 @@ export class CloudApiConnector extends WhatsAppConnector {
 
       webhooks: this.config.connectors.cloud.webhooksEnabled,
       outboundMessaging: cloudConfigured,
+      outboundMessagingTypes: cloudConfigured
+        ? ['text', 'image', 'video', 'audio', 'voice', 'document', 'sticker', 'location', 'contact', 'reaction']
+        : [],
+      mediaDownload: false,
+      sendMedia: cloudConfigured,
+      sendVoice: cloudConfigured,
+      sendSticker: cloudConfigured,
+      sendLocation: cloudConfigured,
+      sendContact: cloudConfigured,
+      sendPoll: false,
+      sendReaction: cloudConfigured,
+      markChatSeen: false,
+      messageReactions: false,
+      pollVotes: false,
+      maxMediaUploadBytes: this.config.media?.maxUploadBytes ?? null,
       messageContentRetention: retentionEnabled ? 'enabled' : 'disabled',
       limitations: [
         'The Cloud API cannot enumerate personal chats, arbitrary contacts or full message history.',
@@ -77,6 +92,9 @@ export class CloudApiConnector extends WhatsAppConnector {
           : 'Chat and message endpoints are unavailable until message retention is enabled for this instance.',
         'Connected status means Meta accepted the configured access token and phone number id.',
         'Outbound sends report "accepted" when Meta accepts the request; delivery to the handset is confirmed only by later webhook status events.',
+        'Media is uploaded to Meta on send; media downloads for retained history are not supported by this connector.',
+        'Native WhatsApp polls cannot be created through the Cloud API and are reported as unsupported rather than emulated.',
+        'Calls, chat presence and marking arbitrary retained messages as read are not exposed.',
       ],
     };
   }
@@ -184,29 +202,122 @@ export class CloudApiConnector extends WhatsAppConnector {
   }
 
   /**
-   * Send a text message through the official Cloud API.
+   * Send a message through the official Cloud API.
    *
    * Returns status "accepted" when Meta accepts the request. It never claims the
    * message was delivered: final delivery is confirmed by webhook status events.
    */
-  async sendMessage({ to, text }) {
+  async sendMessage({ to, type = 'text', text, media, caption, filename, voice, asDocument, asSticker, location, contact, contactId, poll, replyToMessageId }) {
     if (!this.config.connectors.cloud.configured) {
       throw new CapabilityNotSupportedError(
         'The Cloud API connector is not configured (META_ACCESS_TOKEN / META_PHONE_NUMBER_ID).',
         { connector: this.type, operation: 'sendMessage' },
       );
     }
+    if (poll) {
+      throw new CapabilityNotSupportedError(
+        'The Cloud API cannot create native WhatsApp polls. Use the WhatsApp Web connector for polls.',
+        { connector: this.type, operation: 'sendMessage', type: 'poll' },
+      );
+    }
     if (!this.client) this.client = this.clientFactory();
     // The Graph API addresses recipients by phone number; a full chat id
     // (for example 131355503402@c.us) is reduced to its user part.
     const recipient = String(to).includes('@') ? String(to).replace(/@.*$/, '') : String(to);
-    const result = await this.client.sendTextMessage({ to: recipient, text });
+    let result;
+    if (type === 'text') {
+      result = await this.client.sendTextMessage({ to: recipient, text });
+    } else if (['image', 'video', 'audio', 'voice', 'document', 'sticker'].includes(type)) {
+      if (typeof this.client.sendMediaMessage !== 'function') {
+        throw new CapabilityNotSupportedError('The configured Cloud API client cannot send media.', {
+          connector: this.type,
+          operation: 'sendMessage',
+          type,
+        });
+      }
+      result = await this.client.sendMediaMessage({
+        to: recipient,
+        type: type === 'voice' ? 'audio' : type,
+        media,
+        caption,
+        filename,
+        voice: type === 'voice' || Boolean(voice),
+        asDocument: Boolean(asDocument),
+        asSticker: Boolean(asSticker),
+        replyToMessageId,
+      });
+    } else if (type === 'location') {
+      result = await this.client.sendLocationMessage({ to: recipient, location });
+    } else if (type === 'contact') {
+      const resolved = contact ?? null;
+      if (!resolved && contactId) {
+        throw new CapabilityNotSupportedError(
+          'The Cloud API cannot resolve a contact id. Supply a contact name and phone number instead.',
+          { connector: this.type, operation: 'sendMessage', type: 'contact' },
+        );
+      }
+      result = await this.client.sendContactMessage({ to: recipient, contact: resolved });
+    } else {
+      throw new CapabilityNotSupportedError(`The Cloud API connector cannot send "${type}" messages.`, {
+        connector: this.type,
+        operation: 'sendMessage',
+        type,
+      });
+    }
     await this.events?.publish(this.instance.id, ConnectionEventType.METRIC, {
       connector: this.type,
       operation: 'sendMessage',
+      type,
       status: result.status,
     });
     return result;
+  }
+
+  /** Add or remove a reaction through the Cloud API. */
+  async sendReaction({ chatId, messageId, reaction }) {
+    if (!this.config.connectors.cloud.configured) {
+      throw new CapabilityNotSupportedError(
+        'The Cloud API connector is not configured (META_ACCESS_TOKEN / META_PHONE_NUMBER_ID).',
+        { connector: this.type, operation: 'sendReaction' },
+      );
+    }
+    if (!this.client) this.client = this.clientFactory();
+    const recipient = String(chatId).includes('@') ? String(chatId).replace(/@.*$/, '') : String(chatId);
+    const result = await this.client.sendReactionMessage({ to: recipient, messageId, reaction });
+    await this.events?.publish(this.instance.id, ConnectionEventType.METRIC, {
+      connector: this.type,
+      operation: 'sendReaction',
+      status: result.status,
+    });
+    return result;
+  }
+
+  async downloadMedia() {
+    throw new CapabilityNotSupportedError(
+      'The Cloud API connector cannot download media for retained history. Media ids are only available on the inbound webhook and are not retained.',
+      { connector: this.type, operation: 'downloadMedia' },
+    );
+  }
+
+  async markChatSeen() {
+    throw new CapabilityNotSupportedError(
+      'The Cloud API connector cannot mark an arbitrary retained chat as read.',
+      { connector: this.type, operation: 'markChatSeen' },
+    );
+  }
+
+  async getMessageReactions() {
+    throw new CapabilityNotSupportedError(
+      'Reactions for retained Cloud API messages are not exposed.',
+      { connector: this.type, operation: 'getMessageReactions' },
+    );
+  }
+
+  async getPollVotes() {
+    throw new CapabilityNotSupportedError(
+      'The Cloud API connector does not support native polls or vote tallies.',
+      { connector: this.type, operation: 'getPollVotes' },
+    );
   }
 
   async disconnect() {

@@ -95,7 +95,7 @@ export class MessageStoreService {
       })),
       hasMore,
       limitations: [
-        'Only inbound messages received by this gateway via webhooks are represented.',
+        'Only chats this gateway recorded are represented: inbound webhook messages and gateway-sent outbound messages.',
         'No contact names, profile pictures or full history are available from the Cloud API.',
       ],
     };
@@ -122,7 +122,7 @@ export class MessageStoreService {
       items: items.map(publicStoredMessage),
       hasMore,
       limitations: [
-        'Only inbound messages retained by this gateway are returned.',
+        'Only messages this gateway retained are returned: inbound webhook messages and outbound sends made through this API.',
         'Message content is stored only while retention is enabled for the instance.',
       ],
     };
@@ -134,6 +134,25 @@ export class MessageStoreService {
 }
 
 export function publicStoredMessage(row) {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  // Older/alternate rows used a singular `contact`; present one shape to the
+  // conversation view so a retained contact card still renders.
+  const contactList = Array.isArray(metadata.contacts)
+    ? metadata.contacts
+    : metadata.contact
+      ? [metadata.contact]
+      : null;
+  const contacts = contactList
+    ? contactList.map((contact) => ({
+        name: contact?.name ?? null,
+        organization: contact?.organization ?? null,
+        phones: Array.isArray(contact?.phones)
+          ? contact.phones
+          : contact?.phone
+            ? [String(contact.phone).replace(/[^\d+]/g, '')]
+            : [],
+      }))
+    : null;
   return {
     id: row.providerMessageId,
     storedId: row.id,
@@ -141,6 +160,16 @@ export function publicStoredMessage(row) {
     direction: row.direction,
     type: row.messageType,
     body: row.body,
+    caption: metadata.caption ?? null,
+    hasMedia: Boolean(metadata.hasMedia ?? metadata.media),
+    media: metadata.media ?? null,
+    poll: metadata.poll ?? null,
+    location: metadata.location ?? null,
+    contacts,
+    ack: metadata.ack ?? null,
+    isForwarded: Boolean(metadata.isForwarded),
+    isRevoked: Boolean(metadata.isRevoked),
+    hasReaction: Boolean(metadata.hasReaction),
     contentRetained: typeof row.body === 'string' && row.body.length > 0,
     from: row.fromId,
     to: row.toId,

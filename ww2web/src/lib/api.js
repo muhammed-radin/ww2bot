@@ -59,7 +59,7 @@ function friendlyMessage(status, code, fallback) {
   if (status === 409) return fallback || 'That action conflicts with the current state.';
   if (status === 429) return fallback || 'Too many requests. Wait a moment and try again.';
   if (status === 501) return fallback || 'This operation is not supported by the selected connector.';
-  if (status >= 500) return 'The service could not complete the request. Try again shortly.';
+  if (status >= 500) return fallback || 'The service could not complete the request. Try again shortly.';
   return fallback || 'The request could not be completed.';
 }
 
@@ -79,7 +79,16 @@ export function buildQuery(params = {}) {
  * @param {string} path absolute same-origin path
  */
 export async function request(path, options = {}) {
-  const { method = 'GET', body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS, signal, skipAuthRedirect = false } = options;
+  const {
+    method = 'GET',
+    body,
+    rawBody,
+    contentType,
+    headers = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal,
+    skipAuthRedirect = false,
+  } = options;
   const upper = method.toUpperCase();
 
   const controller = new AbortController();
@@ -91,7 +100,11 @@ export async function request(path, options = {}) {
   }
 
   const finalHeaders = { Accept: 'application/json', ...headers };
-  if (body !== undefined) finalHeaders['Content-Type'] = 'application/json';
+  if (rawBody !== undefined) {
+    finalHeaders['Content-Type'] = contentType ?? 'application/octet-stream';
+  } else if (body !== undefined) {
+    finalHeaders['Content-Type'] = 'application/json';
+  }
   if (csrfToken && STATE_CHANGING.has(upper)) finalHeaders['X-CSRF-Token'] = csrfToken;
 
   let response;
@@ -100,7 +113,7 @@ export async function request(path, options = {}) {
       method: upper,
       headers: finalHeaders,
       credentials: 'include',
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: rawBody !== undefined ? rawBody : body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (error) {
@@ -243,6 +256,125 @@ export const connectorsApi = {
 
 export const messagesApi = {
   send: (payload) => request('/api/v1/messages/send', { method: 'POST', body: payload }),
+};
+
+/** UTF-8 → base64url, used for media metadata headers (never URL-logged). */
+export function encodeHeaderValue(value) {
+  const text = String(value ?? '');
+  if (text === '') return '';
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function chatPath(instanceId, chatId, suffix = '') {
+  return `/api/v1/instances/${instanceId}/chats/${encodeURIComponent(chatId)}${suffix}`;
+}
+
+/**
+ * Fetch media as bytes. Media routes intentionally return raw bytes rather than
+ * the JSON envelope, so this is separate from `request`. The owner-session
+ * cookie is still sent and 401s use the same redirect handler.
+ */
+export async function fetchMedia(path, { signal, timeoutMs = 45000 } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  const forwardAbort = () => controller.abort('caller');
+  if (signal) {
+    if (signal.aborted) controller.abort('caller');
+    else signal.addEventListener('abort', forwardAbort, { once: true });
+  }
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: 'include',
+      headers: { Accept: '*/*' },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.reason === 'timeout') {
+      throw new ApiError('Loading this media timed out. Try again.', { code: 'TIMEOUT' });
+    }
+    throw new ApiError('Could not load this media from the service.', { code: 'NETWORK_ERROR' });
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener?.('abort', forwardAbort);
+  }
+
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = JSON.parse(await response.text());
+    } catch {
+      payload = null;
+    }
+    const error = payload?.error ?? {};
+    if (response.status === 401) unauthorizedHandler?.();
+    throw new ApiError(friendlyMessage(response.status, error.code, error.message), {
+      status: response.status,
+      code: error.code ?? `HTTP_${response.status}`,
+      details: error.details ?? null,
+      requestId: payload?.requestId ?? response.headers.get('x-request-id') ?? null,
+    });
+  }
+
+  return {
+    blob: await response.blob(),
+    mimeType: response.headers.get('content-type') ?? 'application/octet-stream',
+    disposition: response.headers.get('content-disposition') ?? null,
+  };
+}
+
+/**
+ * Conversation actions. Every call maps to a capability-gated server route; the
+ * UI checks `capabilities` first and shows an honest explanation when a
+ * connector cannot serve one.
+ */
+export const chatApi = {
+  sendText: (instanceId, chatId, payload) =>
+    request(chatPath(instanceId, chatId, '/messages'), { method: 'POST', body: payload }),
+  sendPoll: (instanceId, chatId, payload) =>
+    request(chatPath(instanceId, chatId, '/messages/poll'), { method: 'POST', body: payload }),
+  sendLocation: (instanceId, chatId, payload) =>
+    request(chatPath(instanceId, chatId, '/messages/location'), { method: 'POST', body: payload }),
+  sendContact: (instanceId, chatId, payload) =>
+    request(chatPath(instanceId, chatId, '/messages/contact'), { method: 'POST', body: payload }),
+  sendMedia: (instanceId, chatId, { file, caption = '', voice = false, asDocument = false, asSticker = false, asGif = false, replyToMessageId = null, idempotencyKey = null } = {}) => {
+    if (!file) throw new ApiError('Choose a file to send.', { code: 'VALIDATION_ERROR' });
+    const query = buildQuery({
+      voice: voice ? '1' : undefined,
+      document: asDocument ? '1' : undefined,
+      sticker: asSticker ? '1' : undefined,
+      gif: asGif ? '1' : undefined,
+      replyToMessageId,
+      idempotencyKey,
+    });
+    const headers = {
+      'X-Media-Mimetype': file.type || 'application/octet-stream',
+    };
+    if (file.name) headers['X-Media-Filename'] = encodeHeaderValue(file.name);
+    if (caption) headers['X-Media-Caption'] = encodeHeaderValue(caption);
+    return request(chatPath(instanceId, chatId, `/messages/media${query}`), {
+      method: 'POST',
+      rawBody: file,
+      contentType: 'application/octet-stream',
+      headers,
+      timeoutMs: 120000,
+    });
+  },
+  react: (instanceId, chatId, messageId, reaction) =>
+    request(chatPath(instanceId, chatId, `/messages/${encodeURIComponent(messageId)}/reaction`), {
+      method: 'POST',
+      body: { reaction },
+    }),
+  reactions: (instanceId, chatId, messageId) =>
+    request(chatPath(instanceId, chatId, `/messages/${encodeURIComponent(messageId)}/reactions`)),
+  pollVotes: (instanceId, chatId, messageId) =>
+    request(chatPath(instanceId, chatId, `/messages/${encodeURIComponent(messageId)}/poll-votes`)),
+  seen: (instanceId, chatId) => request(chatPath(instanceId, chatId, '/seen'), { method: 'POST', body: {} }),
+  mediaPath: (instanceId, chatId, messageId) =>
+    chatPath(instanceId, chatId, `/messages/${encodeURIComponent(messageId)}/media`),
 };
 
 export const uiApi = {

@@ -43,7 +43,12 @@ export function createDeliveryRepository({ store, encryption, logger = null }) {
     async record(record) {
       let stored = null;
       await store.updateJsonl(fileFor(record.instanceId), (rows) => {
-        const existing = rows.find((row) => row.idempotencyKeyHash === record.idempotencyKeyHash);
+        // Only an actual idempotency key may collapse records. Keyless sends
+        // all share a null digest; treating that as a duplicate would return
+        // the first keyless delivery (and its provider id) forever.
+        const existing = record.idempotencyKeyHash
+          ? rows.find((row) => row.idempotencyKeyHash === record.idempotencyKeyHash)
+          : null;
         if (existing) {
           stored = existing;
           return undefined;

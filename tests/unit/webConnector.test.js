@@ -7,7 +7,7 @@ import { loadConfig } from '../../src/config/env.js';
 import { createLogger } from '../../src/utils/logger.js';
 import { SessionService } from '../../src/services/session.service.js';
 import { BrowserManager, InstanceLimitReachedError } from '../../src/connectors/web/browserManager.js';
-import { WebConnector } from '../../src/connectors/web/web.connector.js';
+import { WebConnector, serialiseMessage } from '../../src/connectors/web/web.connector.js';
 import { ConnectionEventBus } from '../../src/events/connectionEvents.js';
 import {
   CapabilityNotSupportedError,
@@ -16,7 +16,7 @@ import {
   ConnectorError,
   ValidationError,
 } from '../../src/utils/errors.js';
-import { createFakeWhatsAppModule } from '../helpers/fakeWhatsAppWeb.js';
+import { createFakeWhatsAppModule, createFakePupPage } from '../helpers/fakeWhatsAppWeb.js';
 import { BASE_TEST_ENV } from '../helpers/testApp.js';
 import { createTestRepositories } from '../helpers/testStore.js';
 
@@ -91,7 +91,23 @@ test('capabilities are honest and the connector is opt-in', async () => {
   assert.equal(caps.qrAuth, true);
   assert.equal(caps.pairingCode, true);
   assert.equal(caps.outboundMessaging, true);
-  assert.deepEqual(caps.outboundMessagingTypes, ['text']);
+  assert.deepEqual(caps.outboundMessagingTypes, [
+    'text',
+    'image',
+    'video',
+    'audio',
+    'voice',
+    'document',
+    'sticker',
+    'location',
+    'contact',
+    'poll',
+    'reaction',
+  ]);
+  assert.equal(caps.mediaDownload, true);
+  assert.equal(caps.sendMedia, true);
+  assert.equal(caps.sendPoll, true);
+  assert.equal(caps.sendReaction, true);
   assert.equal(caps.authorizationReference, 'TEST-AUTHZ-REFERENCE-0001');
   await cleanup(enabled.sessionDir);
 });
@@ -317,6 +333,14 @@ test('chats and messages stay readable when the library model serialiser throws'
           isMedia: false,
           t: 1700000500,
         },
+        {
+          // WhatsApp Web can omit `_serialized`/`$1` on message keys.
+          id: { fromMe: false, remote: { _serialized: '919812345678@c.us' }, id: 'RAW2' },
+          type: 'chat',
+          body: 'Raw key without serialized id',
+          isMedia: false,
+          t: 1700000600,
+        },
       ],
     },
   });
@@ -333,12 +357,205 @@ test('chats and messages stay readable when the library model serialiser throws'
   assert.equal(chat.chatId, '919812345678@c.us');
 
   const messages = await connector.listMessages('919812345678@c.us', { limit: 10 });
-  assert.equal(messages.items.length, 1);
+  assert.equal(messages.items.length, 2);
   assert.equal(messages.items[0].body, 'Raw inbound');
   assert.equal(messages.items[0].direction, 'inbound');
+  assert.equal(messages.items[1].body, 'Raw key without serialized id');
+  assert.equal(
+    messages.items[1].id,
+    'false_919812345678@c.us_RAW2',
+    'a missing _serialized/$1 key is reconstructed from its parts',
+  );
 
   await connector.destroy();
   await cleanup(sessionDir);
+});
+
+test('rich messages expose media, poll, location, quoted and call-log metadata', async () => {
+  const library = createFakeWhatsAppModule({
+    brokenChats: true,
+    chatMessages: {
+      '919812345678@c.us': [
+        {
+          id: { _serialized: 'false_919812345678@c.us_IMG1', fromMe: false, remote: { _serialized: '919812345678@c.us' } },
+          type: 'image',
+          isMedia: true,
+          mimetype: 'image/jpeg',
+          filename: 'photo.jpg',
+          size: 2048,
+          caption: 'At the beach',
+          body: 'BASE64_PREVIEW',
+          t: 1700000500,
+          ack: 2,
+          hasReaction: true,
+          isForwarded: true,
+          quotedMsg: {
+            id: { _serialized: 'false_919812345678@c.us_QUOTED', fromMe: false },
+            type: 'chat',
+            body: 'Original question',
+          },
+        },
+        {
+          id: { _serialized: 'true_919812345678@c.us_POLL1', fromMe: true, remote: { _serialized: '919812345678@c.us' } },
+          type: 'poll_creation',
+          pollName: 'Where shall we eat?',
+          pollOptions: [
+            { name: 'Pizza', localId: 0 },
+            { name: 'Sushi', localId: 1 },
+          ],
+          pollSelectableOptionsCount: 0,
+          t: 1700000600,
+        },
+        {
+          id: { _serialized: 'false_919812345678@c.us_LOC1', fromMe: false, remote: { _serialized: '919812345678@c.us' } },
+          type: 'location',
+          lat: 12.9716,
+          lng: 77.5946,
+          loc: 'Cubbon Park\nBengaluru',
+          clientUrl: 'https://maps.example/1',
+          t: 1700000700,
+        },
+        {
+          id: { _serialized: 'false_919812345678@c.us_CALL1', fromMe: false, remote: { _serialized: '919812345678@c.us' } },
+          type: 'call_log',
+          subtype: 'missed',
+          duration: 0,
+          t: 1700000800,
+        },
+      ],
+    },
+  });
+  const { connector, sessionDir } = await build({ library });
+  await connector.requestQrAuth();
+  library.__lastClient().simulateReady();
+
+  const messages = await connector.listMessages('919812345678@c.us', { limit: 10 });
+  assert.equal(messages.items.length, 4);
+
+  const [image, poll, location, call] = messages.items;
+  assert.equal(image.type, 'image');
+  assert.equal(image.caption, 'At the beach');
+  assert.equal(image.body, 'At the beach');
+  assert.equal(image.media.mimetype, 'image/jpeg');
+  assert.equal(image.media.filename, 'photo.jpg');
+  assert.equal(image.media.size, 2048);
+  assert.equal(image.quoted.body, 'Original question');
+  assert.equal(image.hasReaction, true);
+  assert.equal(image.isForwarded, true);
+
+  assert.equal(poll.type, 'poll_creation');
+  assert.equal(poll.poll.question, 'Where shall we eat?');
+  assert.deepEqual(
+    poll.poll.options.map((option) => option.name),
+    ['Pizza', 'Sushi'],
+  );
+  assert.equal(poll.poll.allowMultipleAnswers, true);
+
+  assert.equal(location.type, 'location');
+  assert.equal(location.location.latitude, 12.9716);
+  assert.equal(location.location.longitude, 77.5946);
+  assert.equal(location.location.address, 'Bengaluru');
+  assert.equal(location.location.url, 'https://maps.example/1');
+
+  assert.equal(call.type, 'call_log');
+  assert.equal(call.subtype, 'missed');
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('media downloads forward the declared MIME type to DownloadManager', async () => {
+  // Regression guard for WhatsApp Web 2.3000+: DownloadManager defaults an
+  // omitted mimetype to application/octet-stream and rejects uncached images
+  // with InvalidMediaFileType. The direct page-store path must pass it through.
+  const library = createFakeWhatsAppModule({ brokenChats: true });
+  const { connector, sessionDir } = await build({ library });
+  await connector.requestQrAuth();
+  const client = library.__lastClient();
+  client.simulateReady();
+
+  const captured = [];
+  const rawMessage = {
+    mediaData: { mediaStage: 'INIT' },
+    downloadMedia: async () => {},
+    directPath: '/v/t62.7118-24/fixture',
+    encFilehash: 'enc-file-hash',
+    filehash: 'file-hash',
+    mediaKey: 'media-key',
+    mediaKeyTimestamp: 1700000000,
+    type: 'image',
+    mimetype: 'image/jpeg',
+    filename: 'photo.jpg',
+    size: 4096,
+  };
+
+  client.pupPage = {
+    async evaluate(fn, ...args) {
+      const previous = globalThis.window;
+      globalThis.window = {
+        require(name) {
+          if (name === 'WAWebCollections') {
+            return { Msg: { get: () => rawMessage } };
+          }
+          if (name === 'WAWebDownloadManager') {
+            return {
+              downloadManager: {
+                async downloadAndMaybeDecrypt(options) {
+                  captured.push(options);
+                  return new ArrayBuffer(8);
+                },
+              },
+            };
+          }
+          throw new Error(`unexpected require(${name})`);
+        },
+        WWebJS: { async arrayBufferToBase64Async() { return 'aGVsbG8='; } },
+      };
+      try {
+        return await fn(...args);
+      } finally {
+        globalThis.window = previous;
+      }
+    },
+  };
+
+  const media = await connector.downloadMedia({
+    chatId: '919812345678@c.us',
+    messageId: 'false_919812345678@c.us_IMG1',
+  });
+
+  assert.equal(media.data, 'aGVsbG8=');
+  assert.equal(media.mimetype, 'image/jpeg');
+  assert.equal(media.filename, 'photo.jpg');
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].type, 'image');
+  assert.equal(
+    captured[0].mimetype,
+    'image/jpeg',
+    'the declared MIME type must reach DownloadManager',
+  );
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('message keys without a serialized id are reconstructed, including LID participants', () => {
+  const direct = serialiseMessage({
+    id: { fromMe: false, remote: { _serialized: '33247392198739@lid' }, id: 'ABC' },
+    type: 'chat',
+    body: 'LID message',
+    t: 1700000000,
+  });
+  assert.equal(direct.id, 'false_33247392198739@lid_ABC');
+
+  const group = serialiseMessage({
+    id: { fromMe: false, remote: { _serialized: '120363000000000000@g.us' }, id: 'DEF' },
+    author: { _serialized: '33247392198739@lid' },
+    type: 'chat',
+    body: 'Group message',
+    t: 1700000000,
+  });
+  assert.equal(group.id, 'false_120363000000000000@g.us_DEF_33247392198739@lid');
 });
 
 test('outbound sends preserve a full chat id and only default a bare number', async () => {
@@ -361,6 +578,165 @@ test('outbound sends preserve a full chat id and only default a bare number', as
     sends.map((send) => send.chatId),
     ['919812345678@c.us', '33247392198739@lid', '131355503402@c.us'],
   );
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('an image WhatsApp Web cannot prepare is retried as a document', async () => {
+  // Regression guard for whatsapp-web.js 1.34.7 on current WhatsApp Web: an
+  // image can fail inside media preparation with the opaque memoizer error
+  // below. The failure happens before the send, so retrying the same bytes as
+  // a document is safe and honest (the response says it was sent as a file).
+  const { connector, library, sessionDir } = await build();
+  await connector.requestQrAuth();
+  const client = library.__lastClient();
+  client.simulateReady();
+
+  const original = client.sendMessage.bind(client);
+  let attempts = 0;
+  client.sendMessage = async (chatId, content, options = {}) => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new Error("Data passed to getter must include an id property (it's how we memoize) but got undefined");
+    }
+    return original(chatId, content, options);
+  };
+
+  const result = await connector.sendMessage({
+    to: '919812345678',
+    type: 'image',
+    media: {
+      mimetype: 'image/png',
+      data: Buffer.from('fixture image bytes').toString('base64'),
+      filename: 'photo.png',
+      size: 19,
+    },
+    caption: 'Fixture caption',
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(client.sentMessages.length, 1);
+  assert.equal(client.sentMessages[0].options.sendMediaAsDocument, true);
+  assert.equal(client.sentMessages[0].message.type, 'document');
+  assert.equal(result.type, 'document');
+  assert.equal(result.fallback, 'document');
+  assert.match(result.warning, /sent as a file/i);
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('a send confirmed by message_create succeeds even when the library returns no model', async () => {
+  // whatsapp-web.js can hand the message to WhatsApp and then fail to read it
+  // back (Msg.get() returns undefined on some LID chats). The message_create
+  // event is the independent confirmation that the send really happened.
+  const { connector, library, sessionDir } = await build();
+  await connector.requestQrAuth();
+  const client = library.__lastClient();
+  client.simulateReady();
+
+  const original = client.sendMessage.bind(client);
+  let sentMessage = null;
+  client.sendMessage = async (chatId, content, options = {}) => {
+    sentMessage = await original(chatId, content, options);
+    setImmediate(() => client.emit('message_create', sentMessage));
+    return undefined;
+  };
+
+  const result = await connector.sendMessage({ to: '919812345678', text: 'confirmed send' });
+
+  assert.equal(result.status, 'sent');
+  assert.equal(result.type, 'text');
+  assert.equal(result.providerMessageId, sentMessage.id._serialized);
+  assert.equal(connector.recentMessages[0]?.body, 'confirmed send');
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('ordinary send failures and voice notes are never retried as documents', async () => {
+  const { connector, library, sessionDir } = await build();
+  await connector.requestQrAuth();
+  const client = library.__lastClient();
+  client.simulateReady();
+
+  let attempts = 0;
+  client.sendMessage = async () => {
+    attempts += 1;
+    throw new Error('socket closed');
+  };
+  const media = {
+    mimetype: 'image/png',
+    data: Buffer.from('fixture image bytes').toString('base64'),
+    filename: 'photo.png',
+    size: 19,
+  };
+  await assert.rejects(
+    () => connector.sendMessage({ to: '919812345678', type: 'image', media }),
+    ConnectorError,
+  );
+  assert.equal(attempts, 1);
+
+  attempts = 0;
+  client.sendMessage = async () => {
+    attempts += 1;
+    throw new Error("Data passed to getter must include an id property (it's how we memoize) but got undefined");
+  };
+  await assert.rejects(
+    () => connector.sendMessage({ to: '919812345678', type: 'voice', voice: true, media }),
+    ConnectorError,
+  );
+  assert.equal(attempts, 1);
+
+  await connector.destroy();
+  await cleanup(sessionDir);
+});
+
+test('media sends strip internal MediaData fields before WhatsApp builds the message model', async () => {
+  // Regression guard for WhatsApp Web 2.3000+: whatsapp-web.js spreads the
+  // MediaData model into the plain message, adding `__x_id`. That shadows the
+  // real MsgKey in the message model, so sender validation memoises on
+  // undefined and the send dies before delivery. The page patch must remove
+  // every internal `__x_*` field while leaving the real id untouched.
+  const { connector, library, sessionDir } = await build();
+  await connector.requestQrAuth();
+  const client = library.__lastClient();
+  client.simulateReady();
+
+  let received = null;
+  const action = {
+    addAndSendMsgToChat(chat, message) {
+      received = message;
+      return [Promise.resolve(), Promise.resolve()];
+    },
+  };
+  client.pupPage = createFakePupPage({ sendAction: action });
+
+  await connector.sendMessage({
+    to: '919812345678',
+    type: 'image',
+    media: {
+      mimetype: 'image/jpeg',
+      data: 'aGVsbG8=',
+      filename: 'photo.jpg',
+      size: 5,
+    },
+  });
+
+  const message = {
+    id: { _serialized: 'real-id' },
+    __x_id: { _serialized: 'shadow-id' },
+    __x_type: 'image',
+    type: 'image',
+    body: null,
+  };
+  action.addAndSendMsgToChat.call(action, null, message);
+
+  assert.equal(message.__x_id, undefined);
+  assert.equal(message.__x_type, undefined);
+  assert.deepEqual(message.id, { _serialized: 'real-id' });
+  assert.equal(received, message);
 
   await connector.destroy();
   await cleanup(sessionDir);

@@ -111,9 +111,10 @@ See [Authentication](./authentication.md).
 The bundled administration dashboard is served by the same process under a
 **narrower, same-origin policy of its own** (\`uiHelmetOptions\`): \`script-src
 'self'\` with no \`unsafe-inline\` and no \`unsafe-eval\`, \`style-src 'self'
-'unsafe-inline'\`, \`img-src 'self' data: blob:\` (the QR code is a data URL),
-\`connect-src 'self'\`, \`object-src 'none'\`, \`base-uri 'none'\`, \`form-action
-'none'\`, and \`frame-ancestors 'none'\`. Only \`public/frontend/\` is reachable
+'unsafe-inline'\`, \`img-src 'self' data: blob:\` (the QR code is a data URL and
+chat images are authenticated blobs), \`media-src 'self' blob:\` (fetched voice
+notes and videos), \`connect-src 'self'\`, \`object-src 'none'\`, \`base-uri 'none'\`,
+\`form-action 'none'\`, and \`frame-ancestors 'none'\`. Only \`public/frontend/\` is reachable
 through \`express.static\` with \`index: false\` and \`dotfiles: "deny"\`; a missing
 asset is a JSON \`404\`. The JSON API keeps its stricter \`default-src 'none'\`
 policy.

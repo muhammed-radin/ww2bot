@@ -211,8 +211,45 @@ test('inbound message normalisation extracts a safe textual representation', () 
   assert.equal(text.direction, 'inbound');
   assert.deepEqual(text.metadata, { contextMessageId: null, forwarded: false });
 
-  assert.equal(normaliseInboundMessage({ id: 'x', type: 'image', image: { caption: 'cap' } }).body, 'cap');
-  assert.equal(normaliseInboundMessage({ id: 'x', type: 'location', location: {} }).body, null);
+  const image = normaliseInboundMessage({
+    id: 'x',
+    type: 'image',
+    image: { caption: 'cap', mime_type: 'image/jpeg', filename: 'photo.jpg' },
+  });
+  assert.equal(image.body, 'cap');
+  assert.equal(image.metadata.hasMedia, true);
+  assert.equal(image.metadata.caption, 'cap');
+  assert.deepEqual(image.metadata.media, { mimetype: 'image/jpeg', filename: 'photo.jpg', isPtt: false });
+
+  const location = normaliseInboundMessage({
+    id: 'x',
+    type: 'location',
+    location: { latitude: 12.9716, longitude: 77.5946, name: 'Cubbon Park', address: 'Bengaluru' },
+  });
+  assert.equal(location.body, null);
+  assert.deepEqual(location.metadata.location, {
+    latitude: 12.9716,
+    longitude: 77.5946,
+    name: 'Cubbon Park',
+    address: 'Bengaluru',
+    url: null,
+  });
+
+  const contacts = normaliseInboundMessage({
+    id: 'x',
+    type: 'contacts',
+    contacts: [
+      {
+        name: { formatted_name: 'Ada Lovelace' },
+        phones: [{ phone: '+44 20 7946 0958' }],
+        org: { company: 'Analytical' },
+      },
+    ],
+  });
+  assert.deepEqual(contacts.metadata.contacts, [
+    { name: 'Ada Lovelace', organization: 'Analytical', phones: ['+442079460958'] },
+  ]);
+
   assert.equal(
     normaliseInboundMessage({ id: 'x', type: 'interactive', interactive: { button_reply: { title: 'Yes' } } }).body,
     'Yes',

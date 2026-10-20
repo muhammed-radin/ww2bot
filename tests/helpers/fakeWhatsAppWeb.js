@@ -118,10 +118,11 @@ export function buildFakeContacts() {
  * runs the injected function with a fake `window` in scope, exactly as the real
  * page would.
  */
-export function createFakePupPage({ chats = buildFakeChats(), chatMessages = {} } = {}) {
+export function createFakePupPage({ chats = buildFakeChats(), chatMessages = {}, sendAction = null } = {}) {
   const byId = new Map(chats.map((chat) => [chat.id._serialized, chat]));
   const pageWindow = {
     require(name) {
+      if (name === 'WAWebSendMsgChatAction' && sendAction) return sendAction;
       if (name === 'WAWebCollections') {
         return {
           Chat: {
@@ -171,6 +172,42 @@ export function createFakeWhatsAppModule({
 } = {}) {
   const clients = [];
 
+  class MessageMedia {
+    constructor(mimetype, data, filename = null, filesize = null) {
+      this.mimetype = mimetype;
+      this.data = data;
+      this.filename = filename;
+      this.filesize = filesize;
+    }
+  }
+
+  class Location {
+    constructor(latitude, longitude, options = {}) {
+      this.latitude = latitude;
+      this.longitude = longitude;
+      this.name = options.name;
+      this.address = options.address;
+      this.url = options.url;
+      this.description = options.description;
+    }
+  }
+
+  class Poll {
+    constructor(pollName, pollOptions, options = {}) {
+      this.pollName = pollName;
+      this.pollOptions = pollOptions.map((name, localId) => ({ name, localId }));
+      this.options = { allowMultipleAnswers: options.allowMultipleAnswers === true };
+    }
+  }
+
+  class Contact {
+    constructor(client, data = {}) {
+      this.id = data.id ?? { _serialized: '12025550108@c.us' };
+      this.name = data.name ?? 'Fixture Contact';
+      this.number = data.number ?? '12025550108';
+    }
+  }
+
   class FakeClient extends EventEmitter {
     constructor(options) {
       super();
@@ -179,6 +216,12 @@ export function createFakeWhatsAppModule({
       this.destroyed = false;
       this.loggedOut = false;
       this.initialized = false;
+      this.sentMessages = [];
+      this.seen = [];
+      this.reactions = [];
+      this.mediaById = new Map();
+      this.reactionsById = new Map();
+      this.pollVotesById = new Map();
       if (brokenChats) this.pupPage = createFakePupPage({ chats, chatMessages });
       clients.push(this);
     }
@@ -234,18 +277,99 @@ export function createFakeWhatsAppModule({
       return chats.find((chat) => chat.id._serialized === chatId) ?? null;
     }
 
-    async sendMessage(chatId, text) {
+    async sendMessage(chatId, content, options = {}) {
       const user = this.info?.wid?.user ?? '919800000000';
-      return {
-        id: { _serialized: `true_${chatId}_OUT001`, id: 'OUT001' },
+      let type = 'chat';
+      let body = typeof content === 'string' ? content : null;
+      const extra = {};
+      if (content instanceof MessageMedia) {
+        type = options.sendMediaAsSticker
+          ? 'sticker'
+          : options.sendAudioAsVoice
+            ? 'ptt'
+            : options.sendMediaAsDocument
+              ? 'document'
+              : content.mimetype.startsWith('image/')
+                ? 'image'
+                : content.mimetype.startsWith('video/')
+                  ? 'video'
+                  : content.mimetype.startsWith('audio/')
+                    ? 'audio'
+                    : 'document';
+        body = options.caption ?? '';
+        extra.mimetype = content.mimetype;
+        extra.filename = content.filename;
+        extra.size = content.filesize;
+        extra.isPtt = Boolean(options.sendAudioAsVoice);
+      } else if (content instanceof Location) {
+        type = 'location';
+        extra.lat = content.latitude;
+        extra.lng = content.longitude;
+        extra.loc = content.description;
+        extra.clientUrl = content.url;
+      } else if (content instanceof Poll) {
+        type = 'poll_creation';
+        body = content.pollName;
+        extra.pollName = content.pollName;
+        extra.pollOptions = content.pollOptions;
+        extra.pollSelectableOptionsCount = content.options.allowMultipleAnswers ? 0 : 1;
+      } else if (content instanceof Contact) {
+        type = 'vcard';
+        body = `BEGIN:VCARD\nFN:${content.name}\nTEL:${content.number}\nEND:VCARD`;
+        extra.vcard = body;
+      }
+      const message = {
+        id: { _serialized: `true_${chatId}_OUT${this.sentMessages.length + 1}`, id: `OUT${this.sentMessages.length + 1}` },
         from: `${user}@c.us`,
         to: chatId,
         fromMe: true,
-        type: 'chat',
-        body: text,
-        hasMedia: false,
+        type,
+        body,
+        hasMedia: content instanceof MessageMedia,
         timestamp: Math.floor(Date.now() / 1000),
+        ...extra,
       };
+      this.sentMessages.push({ chatId, content, options, message });
+      return message;
+    }
+
+    async sendReaction(messageId, reaction) {
+      this.reactions.push({ messageId, reaction });
+      return true;
+    }
+
+    async sendSeen(chatId) {
+      this.seen.push(chatId);
+      return true;
+    }
+
+    async getContactById(contactId) {
+      const found = contacts.find((contact) => contact.id._serialized === contactId);
+      return new Contact(this, found ?? { id: { _serialized: contactId } });
+    }
+
+    async getMessageById(messageId) {
+      const media = this.mediaById.get(messageId);
+      const reactions = this.reactionsById.get(messageId);
+      const pollVotes = this.pollVotesById.get(messageId);
+      if (!media && !reactions && !pollVotes) return null;
+      return {
+        id: { _serialized: messageId },
+        hasMedia: Boolean(media),
+        async downloadMedia() {
+          return media ?? null;
+        },
+        async getReactions() {
+          return reactions;
+        },
+        async getPollVotes() {
+          return pollVotes ?? [];
+        },
+      };
+    }
+
+    async getPollVotes(messageId) {
+      return this.pollVotesById.get(messageId) ?? [];
     }
 
     /** Test helper: emit a realistic inbound message. */
@@ -301,6 +425,10 @@ export function createFakeWhatsAppModule({
     Client: FakeClient,
     LocalAuth,
     RemoteAuth,
+    MessageMedia,
+    Location,
+    Poll,
+    Contact,
     __clients: clients,
     __lastClient: () => clients[clients.length - 1] ?? null,
   };

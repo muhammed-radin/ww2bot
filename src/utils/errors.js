@@ -119,11 +119,11 @@ export class ConnectorDisabledError extends AppError {
 }
 
 export class ConnectorError extends AppError {
-  constructor(message, details) {
+  constructor(message, details, { cause } = {}) {
     // 502, but the message is authored safe ("the linked session is not
     // readable"): returning it is what makes a connector failure actionable
     // instead of a bare "Internal server error.".
-    super(ErrorCode.CONNECTOR_ERROR, message, { status: 502, details, expose: true });
+    super(ErrorCode.CONNECTOR_ERROR, message, { status: 502, details, expose: true, cause });
   }
 }
 

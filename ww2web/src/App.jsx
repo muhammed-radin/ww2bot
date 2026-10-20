@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/use-auth.jsx';
 import ConfigPage from '@/pages/config.jsx';
 import ConnectionPage from '@/pages/connection.jsx';
 import AutoRepliesPage from '@/pages/autoreplies.jsx';
+import ChatPage from '@/pages/chat.jsx';
 import DashboardPage from '@/pages/dashboard.jsx';
 import DataPage from '@/pages/data.jsx';
 import DocPage from '@/pages/doc.jsx';
@@ -45,6 +46,8 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="connection" element={<ConnectionPage />} />
         <Route path="instances" element={<InstancesPage />} />
+        <Route path="chats" element={<ChatPage />} />
+        <Route path="chats/:chatId" element={<ChatPage />} />
         <Route path="messaging" element={<MessagingPage />} />
         <Route path="autoreplies" element={<AutoRepliesPage />} />
         <Route path="data" element={<DataPage />} />

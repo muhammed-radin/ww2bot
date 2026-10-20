@@ -17,6 +17,15 @@ export const ConnectorCapability = Object.freeze({
   LIST_CONTACTS: 'listContacts',
   WEBHOOKS: 'webhooks',
   OUTBOUND_MESSAGING: 'outboundMessaging',
+  MEDIA_DOWNLOAD: 'mediaDownload',
+  SEND_MEDIA: 'sendMedia',
+  SEND_LOCATION: 'sendLocation',
+  SEND_CONTACT: 'sendContact',
+  SEND_POLL: 'sendPoll',
+  SEND_REACTION: 'sendReaction',
+  MARK_CHAT_SEEN: 'markChatSeen',
+  MESSAGE_REACTIONS: 'messageReactions',
+  POLL_VOTES: 'pollVotes',
 });
 
 export class WhatsAppConnector {
@@ -74,12 +83,48 @@ export class WhatsAppConnector {
   }
 
   /**
-   * Send a text message.
-   * @param {{to:string, text:string}} _input
-   * @returns {Promise<{status:string, providerMessageId?:string|null}>}
+   * Send a message of any supported type.
+   *
+   * The input always names the recipient and the type. Text uses `text`;
+   * media uses `media` (`{ mimetype, data, filename, size }`), optional
+   * `caption` and flags such as `voice`, `asDocument` and `asSticker`.
+   * Other types use `location`, `contactId`/`contact` or `poll`.
+   *
+   * @param {object} _input
+   * @returns {Promise<{status:string, providerMessageId?:string|null, type?:string}>}
    */
   async sendMessage(_input) {
     return this.#unsupported('sendMessage');
+  }
+
+  /**
+   * Download the media attached to one message.
+   * @param {{chatId:string, messageId:string}} _input
+   * @returns {Promise<{data:string, mimetype:string, filename?:string|null, size?:number|null}|null>}
+   *   Base64 data, or null when the media is no longer available.
+   */
+  async downloadMedia(_input) {
+    return this.#unsupported('downloadMedia');
+  }
+
+  /** Add or remove an emoji reaction on a message. */
+  async sendReaction(_input) {
+    return this.#unsupported('sendReaction');
+  }
+
+  /** Mark a conversation as read on the linked device. */
+  async markChatSeen(_input) {
+    return this.#unsupported('markChatSeen');
+  }
+
+  /** Read the reactions currently attached to a message. */
+  async getMessageReactions(_input) {
+    return this.#unsupported('getMessageReactions');
+  }
+
+  /** Read the vote tallies for a poll message. */
+  async getPollVotes(_input) {
+    return this.#unsupported('getPollVotes');
   }
 
   /** Release any half-open client before a supervised reconnect. */
@@ -126,7 +171,17 @@ export function describeSupportedEndpoints(capabilities) {
     [`GET ${instance}/chats`]: Boolean(capabilities.listChats),
     [`GET ${instance}/chats/:chatId`]: Boolean(capabilities.getChat),
     [`GET ${instance}/chats/:chatId/messages`]: Boolean(capabilities.listMessages),
+    [`GET ${instance}/chats/:chatId/messages/:messageId/media`]: Boolean(capabilities.mediaDownload),
+    [`GET ${instance}/chats/:chatId/messages/:messageId/reactions`]: Boolean(capabilities.messageReactions),
+    [`GET ${instance}/chats/:chatId/messages/:messageId/poll-votes`]: Boolean(capabilities.pollVotes),
     [`GET ${instance}/contacts`]: Boolean(capabilities.listContacts),
+    [`POST ${instance}/chats/:chatId/messages`]: Boolean(capabilities.outboundMessaging),
+    [`POST ${instance}/chats/:chatId/messages/media`]: Boolean(capabilities.sendMedia),
+    [`POST ${instance}/chats/:chatId/messages/poll`]: Boolean(capabilities.sendPoll),
+    [`POST ${instance}/chats/:chatId/messages/location`]: Boolean(capabilities.sendLocation),
+    [`POST ${instance}/chats/:chatId/messages/contact`]: Boolean(capabilities.sendContact),
+    [`POST ${instance}/chats/:chatId/messages/:messageId/reaction`]: Boolean(capabilities.sendReaction),
+    [`POST ${instance}/chats/:chatId/seen`]: Boolean(capabilities.markChatSeen),
     [`POST /api/v1/messages/send`]: Boolean(capabilities.outboundMessaging),
   };
 }

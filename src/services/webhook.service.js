@@ -213,20 +213,65 @@ export class WebhookService {
 export function normaliseInboundMessage(message) {
   const sentAt = message.timestamp ? new Date(Number(message.timestamp) * 1000) : new Date();
   const { type, body } = extractBody(message);
+  const metadata = {
+    contextMessageId: message.context?.id ?? null,
+    forwarded: Boolean(message.context?.forwarded),
+  };
+
+  // Retain the metadata Meta actually sent. Media bytes are not downloaded,
+  // but a filename, MIME type, caption, location or contact card is useful in
+  // the conversation view and is safe to keep while retention is enabled.
+  if (['image', 'video', 'audio', 'document', 'sticker'].includes(type)) {
+    const media = message[type] ?? {};
+    metadata.hasMedia = true;
+    metadata.caption = typeof media.caption === 'string' ? media.caption : null;
+    metadata.media = {
+      mimetype: typeof media.mime_type === 'string' ? media.mime_type : null,
+      filename: typeof media.filename === 'string' ? media.filename : null,
+      isPtt: Boolean(media.voice),
+    };
+  }
+
+  if (type === 'location' && message.location) {
+    const latitude = Number(message.location.latitude);
+    const longitude = Number(message.location.longitude);
+    metadata.location = {
+      latitude: Number.isFinite(latitude) ? latitude : null,
+      longitude: Number.isFinite(longitude) ? longitude : null,
+      name: typeof message.location.name === 'string' ? message.location.name : null,
+      address: typeof message.location.address === 'string' ? message.location.address : null,
+      url: typeof message.location.url === 'string' ? message.location.url : null,
+    };
+  }
+
+  if (Array.isArray(message.contacts) && message.contacts.length > 0) {
+    metadata.contacts = message.contacts.map((contact) => {
+      const first = contact?.name?.first_name ?? '';
+      const last = contact?.name?.last_name ?? '';
+      const formatted = contact?.name?.formatted_name ?? `${first} ${last}`.trim();
+      const phones = (Array.isArray(contact?.phones) ? contact.phones : [])
+        .map((entry) => String(entry?.phone ?? entry?.wa_id ?? '').replace(/[^\d+]/g, ''))
+        .filter(Boolean);
+      return {
+        name: formatted || null,
+        organization: contact?.org?.company ?? null,
+        phones,
+      };
+    });
+  }
+
   return {
     chatId: message.from,
     providerMessageId: message.id,
     direction: 'inbound',
     messageType: type,
-    // Only the textual representation is kept; media is not downloaded.
+    // The body is the text representation (or the media caption); media bytes
+    // stay on Meta and are not downloaded by this gateway.
     body,
     fromId: message.from ?? null,
     toId: null,
     sentAt: Number.isNaN(sentAt.getTime()) ? new Date() : sentAt,
-    metadata: {
-      contextMessageId: message.context?.id ?? null,
-      forwarded: Boolean(message.context?.forwarded),
-    },
+    metadata,
   };
 }
 
